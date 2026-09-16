@@ -74,8 +74,13 @@ COMP3500SEF-Group-Project/
 
 ## 如何运行 / How to Run
 
-> ⚠️ 代码开发中，运行步骤将在 P2 阶段随代码一起补充至本文件。
-> Setup instructions will be added here as the code lands in P2.
+> 可运行的代码骨架已就位，功能开发进行中。详细代码模板见 `CODE.md`。
+> A runnable skeleton is in place; feature development in progress. See `CODE.md` for templates.
+
+- **前端 Frontend**：直接用浏览器打开 `frontend/index.html`（登录页模板）。
+- **后端 Backend**：终端运行 `python backend/server.py`，访问 `http://localhost:8000/api/health` 与 `/api/orders`。
+- **数据库 Database**：在 MySQL / PostgreSQL / SQLite 中执行 `database/schema.sql`。
+- **测试 Tests**：运行 `python -m unittest tests/test_example.py`。
 
 ---
 

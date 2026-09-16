@@ -64,6 +64,9 @@ https://github.com/xulanxin30-tech/COMP3500SEF-Group-Project.git
 | ZHANGZHIYUAN | 测试 QA | tests/ |
 | Aw Chun Yin | 运维与文档 | backend/deploy/ + docs/ |
 
+> 📄 每个模块的**代码模板**（HTML / Python / SQL / 测试）都写在根目录的 `CODE.md` 和对应文件夹里，照着模板写就行。
+> 📄 Code templates for every module are in `CODE.md` and the folders — just follow the template.
+
 ---
 
 ## 🤝 小组约定
