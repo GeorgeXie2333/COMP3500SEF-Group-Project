@@ -1,105 +1,86 @@
-# 物流管理系统 · 小组协作文档仓库
-# Logistics Management System · Team Collaboration Repo
+# 物流管理系统 / Logistics Management System
 
-> 本仓库用于团队**共享编辑**项目文档与代码。
-> This repository is for the team to **collaboratively edit** project docs and code.
->
-> 📌 谁改了什么都会有记录（Git 历史），改坏了随时能回滚。
+**COMP3500SEF 软件工程项目 · Group Project**
 
 ---
 
-## 🌟 不会 Git 也没关系！网页直接编辑（最简方法，不用装任何软件）
+## 项目简介 / About
 
-1. 注册 GitHub 账号（github.com → Sign up），把**用户名**发给组长
-2. 打开仓库链接并登录：https://github.com/xulanxin30-tech/COMP3500SEF-Group-Project
-3. 在仓库页面按键盘 **`.` 键**（句号）→ 进入**网页版编辑器**（github.dev）
-4. 像用记事本一样直接改文件（Ctrl+S 保存）
-5. 点左边「源代码管理」图标 → 写一句说明（如 "add login page"）→ 点 **✓ 提交 Commit** → 点 **同步 Publish/Sync** 推送
+本项目开发一个**基于 Web 的物流管理系统**，覆盖订单管理、库存管理、运输配送、签收确认与物流查询的完整业务链路，提供一个可运行、可演示的 MVP。
 
-> 或者更简单：在文件列表点开任意文件 → 点右上角 **✏️ 铅笔图标** → 改完在页面底部点 **Commit changes** 保存。
-
-> 想在自己电脑上装 VS Code 深度开发的同学，见下方「快速开始」章节。
-
----
-
-## 一、项目简介 / About
+This project builds a **web-based Logistics Management System** covering order management, inventory, transport dispatch, delivery confirmation and tracking — delivered as a runnable, demo-ready MVP.
 
 | 项目 Project | 物流管理系统 / Logistics Management System |
 |---|---|
 | 课程 Course | Course Engineering（软件工程） |
-| 团队 Team | 7 人，组长：XU Lanxin |
+| 团队 Team | 7 名成员，组长：XU Lanxin |
 | 沟通 Communication | 线上异步讨论（消息群），不设固定会议时间 |
 
-**目标 Objective**：开发一个可运行的 Web 物流管理系统，覆盖订单 → 库存 → 运输 → 签收 → 查询的核心业务链路。
-
 ---
 
-## 二、团队成员 / Team Members
+## 团队成员 / Team Members
 
-| 姓名 Name | 角色 Role | 模块 Module |
+| 姓名 Name | 角色 Role | 主要职责 Key Responsibilities |
 |---|---|---|
-| XU Lanxin | 组长 / Team Lead | 项目管理、整体交付 |
-| Wong Ching Fung | UI/UX 设计 | 用户故事、线框图、高保真稿 |
-| Chi Xuanyi | 前端开发 Frontend | 全部 UI 页面、接口对接 |
-| XIE Jiayan | 后端开发 Backend | REST API、业务逻辑、鉴权 |
-| CEN Yin Chi | 数据库 Database | ER 建模、DDL、索引、迁移 |
-| ZHANGZHIYUAN | 测试 QA | 测试计划、用例、质量报告 |
-| Aw Chun Yin | 运维与文档 DevOps | GitHub 仓库、CI/CD、部署、手册 |
+| XU Lanxin | 组长 / Team Lead | 项目管理、排期、报告整合与统一提交 |
+| Wong Ching Fung | UI/UX 设计 | 用户故事、线框图、Figma 高保真稿、UI 风格指南 |
+| Chi Xuanyi | 前端开发 Frontend | 全部 UI 页面、客户端逻辑、接口对接、响应式布局 |
+| XIE Jiayan | 后端开发 Backend | REST API、业务逻辑、鉴权与安全 |
+| CEN Yin Chi | 数据库 Database | ER 建模、DDL、索引设计、种子数据、备份与迁移 |
+| ZHANGZHIYUAN | 测试 QA | 测试计划与用例、单元/集成/回归测试、质量报告 |
+| Aw Chun Yin | 运维与文档 DevOps | GitHub 仓库、CI/CD、部署脚本、用户手册与 README |
 
 ---
 
-## 三、目录结构 / Folder Structure
+## 仓库结构 / Repository Structure
 
 ```
-物流管理系统_LMS/
+COMP3500SEF-Group-Project/
 ├── docs/          # 项目文档（章程、模块清单、说明等）
-├── frontend/      # 前端代码（Chi Xuanyi / Wong Ching Fung）
-├── backend/       # 后端代码（XIE Jiayan）
-├── database/      # 数据库脚本（CEN Yin Chi）
-├── tests/         # 测试代码（ZHANGZHIYUAN）
+├── frontend/      # 前端代码
+├── backend/       # 后端代码（含部署脚本）
+├── database/      # 数据库脚本（DDL、迁移、种子数据）
+├── tests/         # 测试代码
+├── .gitignore     # 版本忽略规则
 └── README.md      # 本文件
 ```
 
-> 各成员在自己的模块文件夹里写代码，互不干扰。
+---
+
+## 技术架构 / Tech Stack
+
+| 层 Layer | 技术 Tech |
+|---|---|
+| 前端 Frontend | 待定（如 React / Vue，开发阶段确定） |
+| 后端 Backend | 待定（如 Node.js / Python，开发阶段确定） |
+| 数据库 Database | 待定（如 MySQL / PostgreSQL，开发阶段确定） |
+| 部署 Deployment | Docker + GitHub Actions（CI/CD） |
+
+> 技术选型在 P1 立项阶段（09-23 设计冻结前）确定并同步至本文件。
 
 ---
 
-## 四、协作流程 / How We Collaborate
-
-1. **克隆仓库**：`git clone <仓库地址>`（每人本地一份）
-2. **建分支**：开发前先建自己的分支，如 `feature/frontend-login`，不要在 main 上直接改
-3. **开发 & 提交**：改完代码 → `git add .` → `git commit -m "描述改动"` → `git push`
-4. **合并请求（PR）**：在 GitHub 网页发起 Pull Request，由相关成员 Review 后合并
-5. **同步最新**：每天开始前先 `git pull`，避免冲突
-
-```
-main ──── 稳定版（可运行）
-  └── develop ──── 日常开发集成分支
-        └── feature/xxx ──── 每个人的功能分支，完成后合并回 develop
-```
-
----
-
-## 五、里程碑 / Milestones
+## 里程碑 / Milestones
 
 | 阶段 Phase | 时间 Time | 关键节点 Key Points |
 |---|---|---|
-| P1 立项 Initiation | 09-16 — 09-30 | 范围冻结、仓库建立、设计对齐、Logbook #1 |
-| P2 攻坚 Build | 10-01 — 10-31 | MVP 全链路跑通、Logbook #2/#3 |
-| P3 汇报 Review | 11-01 — 11-23 | 10 分钟汇报、Logbook #4 |
-| P4 定稿 Finalisation | 12-01 — 12-07 | 功能冻结（11-30）、演示视频、报告 |
-| P5 提交 Submission | 12-08 | 报告 + Logbook 提交（硬截止） |
+| P1 立项 Initiation | 09-16 — 09-30 | 题目确认、范围冻结、仓库建立、设计对齐、Logbook #1 |
+| P2 攻坚 Build | 10-01 — 10-31 | MVP 核心链路跑通（下单→库存→配送→签收→查询）、Logbook #2/#3 |
+| P3 汇报 Review | 11-01 — 11-23 | MVP 现场演示、10 分钟脱稿汇报、Logbook #4 |
+| P4 定稿 Finalisation | 12-01 — 12-07 | 功能冻结（11-30）、演示视频、报告初稿/终稿 |
+| P5 提交 Submission | 12-08 | 报告 + 最终 Logbook 提交（硬截止） |
 
 ---
 
-## 六、快速开始 / Quick Start（VS Code）
+## 如何运行 / How to Run
 
-1. 安装 **Git** 与 **VS Code**
-2. VS Code 打开本文件夹（File → Open Folder）
-3. 左下角「源代码管理 Source Control」图标 → 查看改动 → 提交 Commit → 同步 Sync
+> ⚠️ 代码开发中，运行步骤将在 P2 阶段随代码一起补充至本文件。
+> Setup instructions will be added here as the code lands in P2.
 
-> 首次提交前需要设置身份（一次即可）：
-> ```bash
-> git config --global user.name "你的名字 Your Name"
-> git config --global user.email "你的邮箱 your@email.com"
-> ```
+---
+
+## 开发规范 / Dev Conventions
+
+- 分支策略：`main`（稳定版）← `develop`（集成分支）← `feature/xxx`（功能分支）
+- 提交信息使用简洁英文描述（如 `add order list page`）
+- 合并通过 Pull Request 进行，由相关成员 Review
