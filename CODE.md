@@ -177,14 +177,5 @@ python -m unittest tests/test_example.py
 
 ---
 
-## 六、共享编辑约定 / Collaboration Rules
-
-1. **只改自己的模块文件**，提交说明写清楚（如 `add login page`）。
-2. **注释用中英双语**，方便大家都能看懂。
-3. **不要提交敏感信息**（密码、密钥），`.env` 已被忽略。
-4. 想加新文件：在网页编辑器里点 ➕ 新建，文件放到自己模块的文件夹。
-5. 不会跑 / 不会写 / 有问题 → 群里问组长或模块负责人。
-
----
 
 *这份文档也是模板，随着项目推进会持续更新。This doc evolves with the project.*
