@@ -8,6 +8,20 @@
 
 ---
 
+## 🌟 不会 Git 也没关系！网页直接编辑（最简方法，不用装任何软件）
+
+1. 注册 GitHub 账号（github.com → Sign up），把**用户名**发给组长
+2. 打开仓库链接并登录：https://github.com/xulanxin30-tech/COMP3500SEF-Group-Project
+3. 在仓库页面按键盘 **`.` 键**（句号）→ 进入**网页版编辑器**（github.dev）
+4. 像用记事本一样直接改文件（Ctrl+S 保存）
+5. 点左边「源代码管理」图标 → 写一句说明（如 "add login page"）→ 点 **✓ 提交 Commit** → 点 **同步 Publish/Sync** 推送
+
+> 或者更简单：在文件列表点开任意文件 → 点右上角 **✏️ 铅笔图标** → 改完在页面底部点 **Commit changes** 保存。
+
+> 想在自己电脑上装 VS Code 深度开发的同学，见下方「快速开始」章节。
+
+---
+
 ## 一、项目简介 / About
 
 | 项目 Project | 物流管理系统 / Logistics Management System |
