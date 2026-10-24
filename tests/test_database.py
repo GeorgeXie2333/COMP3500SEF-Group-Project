@@ -12,7 +12,10 @@ import importlib.util
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -128,6 +131,11 @@ class DatabaseTestCase(unittest.TestCase):
         finally:
             connection.close()
 
+    def snapshot(self):
+        with closing(sqlite3.connect(self.db)) as connection:
+            return (list(connection.iterdump()),
+                    connection.execute("PRAGMA user_version").fetchone()[0])
+
 
 class TestSchema(DatabaseTestCase):
     def test_all_tables_view_and_trigger_exist(self):
@@ -150,6 +158,17 @@ class TestSchema(DatabaseTestCase):
 
     def test_verify_passes_on_a_fresh_database(self):
         self.make_fresh_db()
+        self.assertEqual(dbm.verify(self.db), 0)
+
+    def test_backend_created_database_has_the_schema_version(self):
+        from backend.server import initialize_database
+        initialize_database(self.db)
+        self.assertEqual(dbm.verify(self.db), 0)
+
+    def test_schema_can_be_reapplied_with_foreign_keys_enabled(self):
+        with closing(dbm.connect(self.db)) as connection:
+            dbm.create_schema(connection)
+            dbm.create_schema(connection)
         self.assertEqual(dbm.verify(self.db), 0)
 
 
@@ -220,6 +239,59 @@ class TestIndexes(DatabaseTestCase):
 
 
 class TestMigration(DatabaseTestCase):
+    def test_failed_upgrade_leaves_all_data_and_schema_unchanged(self):
+        self.make_v11_db()
+        # This item is not on the order: shipment_items can rebuild successfully
+        # before the items CHECK fails, exercising rollback of the whole upgrade.
+        self.execute("UPDATE items SET unit_price = -1 WHERE item_id = 1")
+        before = self.snapshot()
+        with self.assertRaises(sqlite3.IntegrityError):
+            dbm.migrate(self.db)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_orphan_order_lines_are_rejected_without_data_loss(self):
+        self.make_v11_db()
+        self.execute("INSERT INTO shipment_items (shipment_id, item_id) VALUES (1, 999)")
+        before = self.snapshot()
+        with self.assertRaises(sqlite3.IntegrityError):
+            dbm.migrate(self.db)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_invalid_quantity_cannot_be_hidden_by_merging_duplicates(self):
+        self.make_v11_db()
+        self.execute("UPDATE shipment_items SET quantity = 0 WHERE shipment_item_id = 1")
+        before = self.snapshot()
+        with self.assertRaises(sqlite3.IntegrityError):
+            dbm.migrate(self.db)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_partial_database_is_not_replaced_with_seed_data(self):
+        self.execute("CREATE TABLE users (username TEXT)")
+        self.execute("INSERT INTO users VALUES ('keep-me')")
+        before = self.snapshot()
+        with self.assertRaises(ValueError):
+            dbm.migrate(self.db)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_newer_database_version_is_not_downgraded(self):
+        self.make_fresh_db()
+        self.execute("PRAGMA user_version = 99")
+        before = self.snapshot()
+        with self.assertRaises(ValueError):
+            dbm.migrate(self.db)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_migration_does_not_reuse_deleted_ids(self):
+        self.make_v11_db()
+        self.execute("INSERT INTO items (item_id, item_name, sku) VALUES (999, 'Old', 'OLD')")
+        self.execute("DELETE FROM items WHERE item_id = 999")
+        self.assertEqual(dbm.migrate(self.db), 0)
+        self.execute("INSERT INTO items (item_name, sku) VALUES ('New', 'NEW')")
+        self.assertGreater(self.query("SELECT item_id FROM items WHERE sku = 'NEW'")[0]["item_id"], 999)
+        self.execute("INSERT INTO shipment_items (shipment_id, item_id) VALUES (1, 1)")
+        self.assertGreater(self.query(
+            "SELECT shipment_item_id FROM shipment_items WHERE item_id = 1")[0]["shipment_item_id"], 2)
+
     def test_migrate_upgrades_a_v11_database(self):
         self.make_v11_db()
         columns_before = {row["name"] for row in self.query("PRAGMA table_info(shipment_items)")}
@@ -245,6 +317,65 @@ class TestMigration(DatabaseTestCase):
 
 
 class TestBackup(DatabaseTestCase):
+    def test_retention_does_not_prune_another_databases_backups(self):
+        self.make_fresh_db()
+        out = self.tmp / "backups"
+        out.mkdir()
+        other = out / "lms_2020_archive_20261024-120000.db"
+        other.write_bytes(b"another database's backup")
+        other.with_suffix(".sql").write_text("-- another database", encoding="utf-8")
+        self.assertEqual(dbm.backup(self.db, out, keep=1), 0)
+        self.assertEqual(other.read_bytes(), b"another database's backup")
+        self.assertTrue(other.with_suffix(".sql").exists())
+
+    def test_sql_dump_restores_data_schema_and_version(self):
+        self.make_fresh_db()
+        out = self.tmp / "backups"
+        self.assertEqual(dbm.backup(self.db, out, keep=5), 0)
+        restored = self.tmp / "restored.db"
+        with closing(sqlite3.connect(restored)) as connection:
+            connection.executescript(next(out.glob("*.sql")).read_text(encoding="utf-8"))
+        self.assertEqual(dbm.verify(restored), 0)
+        original = self.snapshot()
+        self.db = restored
+        self.assertEqual(self.snapshot(), original)
+
+    def test_backups_in_the_same_instant_are_distinct_and_retained(self):
+        self.make_fresh_db()
+        out = self.tmp / "backups"
+        with patch.object(dbm, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 10, 24, 12, 0, 0)
+            self.assertEqual(dbm.backup(self.db, out, keep=2), 0)
+            first = next(out.glob("*.db"))
+            original = first.read_bytes()
+            self.execute("UPDATE items SET stock_quantity = 25 WHERE item_id = 1")
+            self.assertEqual(dbm.backup(self.db, out, keep=2), 0)
+            self.assertEqual(len(list(out.glob("*.db"))), 2)
+            self.assertEqual(first.read_bytes(), original)
+            self.assertEqual(dbm.backup(self.db, out, keep=2), 0)
+        self.assertEqual(len(list(out.glob("*.db"))), 2)
+        self.assertEqual(len(list(out.glob("*.sql"))), 2)
+        self.assertFalse(first.exists())
+
+    def test_binary_and_sql_backups_use_the_same_snapshot(self):
+        self.make_fresh_db()
+        out = self.tmp / "backups"
+
+        class ChangingSource(sqlite3.Connection):
+            def backup(source, target, **kwargs):
+                super().backup(target, **kwargs)
+                source.execute("UPDATE items SET stock_quantity = 25 WHERE item_id = 1")
+
+        with closing(sqlite3.connect(self.db, factory=ChangingSource,
+                                     isolation_level=None)) as source:
+            with patch.object(dbm, "connect", return_value=source):
+                self.assertEqual(dbm.backup(self.db, out, keep=5), 0)
+        self.assertEqual(self.query("SELECT stock_quantity FROM items WHERE item_id = 1")[0]["stock_quantity"], 25)
+        with closing(sqlite3.connect(":memory:")) as restored:
+            restored.executescript(next(out.glob("*.sql")).read_text(encoding="utf-8"))
+            with closing(sqlite3.connect(next(out.glob("*.db")))) as binary:
+                self.assertEqual(list(restored.iterdump()), list(binary.iterdump()))
+
     def test_backup_creates_a_restorable_copy(self):
         self.make_fresh_db()
         out = self.tmp / "backups"

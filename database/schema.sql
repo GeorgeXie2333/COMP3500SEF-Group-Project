@@ -19,6 +19,8 @@
 -- Upgrading an existing database:  python database/db_manager.py migrate
 -- Clean rebuild (P4 check):        python database/db_manager.py rebuild
 
+BEGIN IMMEDIATE;
+DROP VIEW IF EXISTS v_shipment_order_summary;
 DROP TABLE IF EXISTS tracking_events;
 DROP TABLE IF EXISTS shipment_items;
 DROP TABLE IF EXISTS shipments;
@@ -193,3 +195,6 @@ CREATE INDEX IF NOT EXISTS idx_tracking_events_hub_time
 -- 6. Status history / KPI counts across shipments, newest first.
 CREATE INDEX IF NOT EXISTS idx_tracking_events_status_time
     ON tracking_events(status, event_time DESC);
+
+PRAGMA user_version = 2;
+COMMIT;

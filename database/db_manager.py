@@ -26,15 +26,18 @@ database/schema.sql has to reach the old file somewhere - that is `migrate`.
 
 SQLite cannot add a CHECK or UNIQUE constraint in place, so the two tables that
 need them are rebuilt with the documented 12-step procedure (disable foreign
-keys, create the new table, copy, drop, rename, re-enable, verify). Every step
-is idempotent: running `migrate` twice changes nothing.
+keys before BEGIN, validate, create/copy/drop/rename, validate again, COMMIT,
+re-enable). The whole upgrade rolls back on failure. Running `migrate` twice
+preserves the data and schema version.
 """
 
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -179,8 +182,11 @@ def say(msg: str = "") -> None:
 # schema creation
 # ---------------------------------------------------------------------------
 def create_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    try:
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        conn.rollback()
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -189,8 +195,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
 def merge_duplicate_lines(conn: sqlite3.Connection) -> int:
     """UNIQUE(shipment_id, item_id) cannot be added while duplicates exist.
 
-    Duplicated rows are merged by summing quantity: the customer still gets the
-    units they ordered, and the double stock deduction disappears.
+    Duplicated rows are merged by summing quantity. This preserves ordered units
+    and leaves stock unchanged; it does not undo any historical stock deduction.
     """
     dupes = conn.execute("""
         SELECT shipment_id, item_id, SUM(quantity) AS total_qty, MIN(shipment_item_id) AS keep_id
@@ -208,64 +214,35 @@ def merge_duplicate_lines(conn: sqlite3.Connection) -> int:
 
 
 def rebuild_shipment_items(conn: sqlite3.Connection) -> None:
-    """Add unit_price, UNIQUE and CHECKs (SQLite cannot ALTER for these)."""
-    orphan_sql = """
-        SELECT COUNT(*) FROM shipment_items
-        WHERE shipment_id NOT IN (SELECT shipment_id FROM shipments)
-           OR item_id NOT IN (SELECT item_id FROM items)
-    """
-    orphan = conn.execute(orphan_sql).fetchone()[0]
-    conn.execute("PRAGMA foreign_keys = OFF")
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute(SHIPMENT_ITEMS_DDL)
-        conn.execute("""
-            INSERT INTO shipment_items_new
-                (shipment_item_id, shipment_id, item_id, quantity, unit_price)
-            SELECT si.shipment_item_id, si.shipment_id, si.item_id, si.quantity, i.unit_price
-            FROM shipment_items AS si
-            JOIN items AS i ON i.item_id = si.item_id
-        """)
-        conn.execute("DROP TABLE shipment_items")
-        conn.execute("ALTER TABLE shipment_items_new RENAME TO shipment_items")
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-    finally:
-        conn.execute("PRAGMA foreign_keys = ON")
-    if orphan:
-        say(f"  ! dropped {orphan} orphan order line(s) whose shipment/item no longer exists")
+    """Rebuild inside the caller's transaction, after validating foreign keys."""
+    conn.execute(SHIPMENT_ITEMS_DDL)
+    conn.execute("""
+        INSERT INTO shipment_items_new
+            (shipment_item_id, shipment_id, item_id, quantity, unit_price)
+        SELECT si.shipment_item_id, si.shipment_id, si.item_id, si.quantity, i.unit_price
+        FROM shipment_items AS si
+        JOIN items AS i ON i.item_id = si.item_id
+    """)
+    conn.execute("DROP TABLE shipment_items")
+    conn.execute("ALTER TABLE shipment_items_new RENAME TO shipment_items")
 
 
 def rebuild_items(conn: sqlite3.Connection) -> None:
-    """sku NOT NULL plus CHECK guards on stock and price."""
-    blanks = conn.execute(
-        "SELECT COUNT(*) FROM items WHERE sku IS NULL OR TRIM(sku) = ''").fetchone()[0]
-    if blanks:
-        conn.execute("UPDATE items SET sku = 'SKU-' || item_id WHERE sku IS NULL OR TRIM(sku) = ''")
-        say(f"  ! gave {blanks} item(s) a placeholder sku (SKU-<item_id>)")
-    negative = conn.execute("SELECT COUNT(*) FROM items WHERE stock_quantity < 0").fetchone()[0]
-    if negative:
-        conn.execute("UPDATE items SET stock_quantity = 0 WHERE stock_quantity < 0")
-        say(f"  ! clamped {negative} negative stock value(s) to 0")
+    """Copy unchanged values; invalid legacy data must be corrected explicitly."""
+    conn.execute(ITEMS_DDL)
+    conn.execute("""
+        INSERT INTO items_new (item_id, item_name, sku, stock_quantity, unit_price)
+        SELECT item_id, item_name, sku, stock_quantity, unit_price FROM items
+    """)
+    conn.execute("DROP TABLE items")
+    conn.execute("ALTER TABLE items_new RENAME TO items")
 
-    conn.execute("PRAGMA foreign_keys = OFF")
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute(ITEMS_DDL)
-        conn.execute("""
-            INSERT INTO items_new (item_id, item_name, sku, stock_quantity, unit_price)
-            SELECT item_id, item_name, sku, stock_quantity, unit_price FROM items
-        """)
-        conn.execute("DROP TABLE items")
-        conn.execute("ALTER TABLE items_new RENAME TO items")
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-    finally:
-        conn.execute("PRAGMA foreign_keys = ON")
+
+def check_foreign_keys(conn: sqlite3.Connection) -> None:
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise sqlite3.IntegrityError(
+            f"{len(violations)} foreign-key violation(s); repair the source data before migrating")
 
 
 def ensure_timeline_index(conn: sqlite3.Connection) -> bool:
@@ -296,18 +273,37 @@ def ensure_trigger_and_view(conn: sqlite3.Connection) -> None:
 
 def migrate(db_path: Path) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    fresh = not db_path.exists() or "shipments" not in table_names(connect(db_path))
-
     conn = connect(db_path)
     try:
-        if fresh:
+        if user_version(conn) > SCHEMA_VERSION:
+            raise ValueError("database was created by a newer schema version; refusing to downgrade")
+        tables = table_names(conn)
+        if not tables:
             say(f"creating a new database from {SCHEMA_PATH.name} ...")
             create_schema(conn)
             say(f"OK  {db_path} is at schema v{SCHEMA_VERSION}")
             return 0
 
+        missing = set(EXPECTED_TABLES) - tables
+        if missing:
+            raise ValueError("unsupported or incomplete database; missing tables: "
+                             + ", ".join(sorted(missing)))
         say(f"migrating {db_path} ...")
         steps = 0
+        # One transaction covers data repair, both rebuilds, indexes and version.
+        # FK enforcement must be disabled before BEGIN for SQLite table rebuilds.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        check_foreign_keys(conn)
+        if conn.execute("SELECT 1 FROM shipment_items WHERE quantity <= 0 LIMIT 1").fetchone():
+            raise sqlite3.IntegrityError("invalid order quantity; repair the source data before migrating")
+        sequences = conn.execute(
+            "SELECT name, seq FROM sqlite_sequence WHERE name IN ('items', 'shipment_items')"
+        ).fetchall()
+        # These objects reference the tables being replaced. Recreate them only
+        # after both renames, within the same transaction.
+        conn.execute("DROP VIEW IF EXISTS v_shipment_order_summary")
+        conn.execute("DROP TRIGGER IF EXISTS trg_shipment_items_price")
 
         if "unit_price" not in column_names(conn, "shipment_items"):
             merged = merge_duplicate_lines(conn)
@@ -322,6 +318,12 @@ def migrate(db_path: Path) -> int:
             rebuild_items(conn)
             steps += 1
 
+        for name, seq in sequences:
+            if conn.execute("SELECT 1 FROM sqlite_sequence WHERE name = ?", (name,)).fetchone():
+                conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?", (seq, name))
+            else:
+                conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)", (name, seq))
+
         if ensure_timeline_index(conn):
             say("  - upgraded idx_tracking_events_lookup with the event_id tie-break")
             steps += 1
@@ -332,12 +334,18 @@ def migrate(db_path: Path) -> int:
             steps += 1
 
         ensure_trigger_and_view(conn)
+        check_foreign_keys(conn)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        conn.execute("COMMIT")
 
         say("  already up to date" if steps == 0 else f"  applied {steps} change set(s)")
         say(f"OK  {db_path} is at schema v{SCHEMA_VERSION}")
         return 0
+    except Exception:
+        conn.rollback()
+        raise
     finally:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.close()
 
 
@@ -349,30 +357,45 @@ def backup(db_path: Path, out_dir: Path, keep: int) -> int:
         say(f"ERROR database not found: {db_path}")
         return 1
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    db_file = out_dir / f"{db_path.stem}_{stamp}.db"
-    sql_file = out_dir / f"{db_path.stem}_{stamp}.sql"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    # Exclusive reservation also handles repeated calls within one clock tick.
+    suffix = 0
+    while True:
+        db_file = out_dir / f"{db_path.stem}_{stamp}_{suffix:06d}.db"
+        try:
+            with db_file.open("xb"):
+                pass
+            break
+        except FileExistsError:
+            suffix += 1
+    sql_file = db_file.with_suffix(".sql")
 
-    src = connect(db_path)
     try:
-        dst = sqlite3.connect(db_file)
-        with dst:
+        with closing(connect(db_path)) as src, closing(sqlite3.connect(db_file)) as dst:
             src.backup(dst)
-        dst.close()
-        with sql_file.open("w", encoding="utf-8") as fh:
-            fh.write(f"-- {db_path.name} dump {stamp}\n")
-            for line in src.iterdump():
-                fh.write(line + "\n")
-            fh.write("COMMIT;\n")
-    finally:
-        src.close()
+            # Dump the completed copy, so both formats describe the same instant
+            # even while the application keeps writing to the source database.
+            with sql_file.open("w", encoding="utf-8") as fh:
+                fh.write(f"-- {db_path.name} dump {stamp}\n")
+                for line in dst.iterdump():
+                    fh.write(line + "\n")
+                # iterdump includes BEGIN/COMMIT, but omits user_version.
+                fh.write(f"PRAGMA user_version = {user_version(dst)};\n")
+    except Exception:
+        db_file.unlink(missing_ok=True)
+        sql_file.unlink(missing_ok=True)
+        raise
 
     digest = hashlib.sha256(db_file.read_bytes()).hexdigest()
     say(f"OK  {db_file}  ({db_file.stat().st_size / 1024:.1f} KB)")
     say(f"OK  {sql_file} ({sql_file.stat().st_size / 1024:.1f} KB)")
     say(f"    sha256 {digest}")
 
-    pairs = sorted(out_dir.glob(f"{db_path.stem}_*.db"))
+    # Match this database's generated names only. A shared backup directory may
+    # also contain backups for e.g. lms_archive.db, which share the lms_ prefix.
+    backup_name = re.compile(
+        re.escape(db_path.stem) + r"_\d{8}-\d{6}(?:-\d{6}_\d+)?\.db")
+    pairs = sorted(path for path in out_dir.iterdir() if backup_name.fullmatch(path.name))
     if keep > 0:
         for old in pairs[:-keep]:
             old.unlink(missing_ok=True)
@@ -507,15 +530,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     db_path = (args.db or Path(os.environ.get("LMS_DB_PATH", DEFAULT_DB))).resolve()
-    if args.action == "migrate":
-        return migrate(db_path)
-    if args.action == "backup":
-        return backup(db_path, args.out, args.keep)
-    if args.action == "rebuild":
-        return rebuild(db_path, args.force)
-    if args.action == "verify":
-        return verify(db_path)
-    return status(db_path)
+    try:
+        if args.action == "migrate":
+            return migrate(db_path)
+        if args.action == "backup":
+            return backup(db_path, args.out, args.keep)
+        if args.action == "rebuild":
+            return rebuild(db_path, args.force)
+        if args.action == "verify":
+            return verify(db_path)
+        return status(db_path)
+    except (sqlite3.Error, OSError, ValueError) as error:
+        say(f"ERROR {error}")
+        return 1
 
 
 if __name__ == "__main__":

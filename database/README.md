@@ -37,6 +37,24 @@ honoured as well, like the backend.
 `migrate` is idempotent: running it twice changes nothing. It is also the only command that
 keeps existing rows - `rebuild` throws them away.
 
+Stop the backend before `migrate` or `rebuild`, and take a backup first. Migration supports
+the six-table v1.1 schema and v1.2; incomplete databases and newer versions are rejected.
+The entire upgrade runs in one transaction, including duplicate-line consolidation and
+the version marker. Any failure rolls it all back. Orphan references, nonpositive order
+quantities, NULL SKUs, negative stock and negative prices must be corrected explicitly;
+the tool does not discard orphan rows or silently change inventory values.
+
+Duplicate v1.1 order lines are combined by summing their quantities, preserving the
+lowest line ID and the AUTOINCREMENT high-water marks. Stock is unchanged. Because v1.1
+stored no historical order prices, migration backfills from the current catalogue price;
+it cannot recover the original sale price. New v1.2 orders capture the price on insert.
+
+Both backup formats use the same completed SQLite snapshot, even if the backend is
+writing during backup. SQL dumps include the schema version and can be restored into an
+empty database with `sqlite3.Connection.executescript`. Repeated backups receive distinct
+names; `--keep N` retains the last N pairs (`0` disables pruning). Both the backend and
+this tool create v1.2 databases with `PRAGMA user_version = 2`.
+
 ## What v1.2 changed
 
 1. `shipment_items.unit_price` - the price snapshot taken at order time. Filled by trigger
@@ -50,8 +68,9 @@ keeps existing rows - `rebuild` throws them away.
 
 Existing databases receive all of this through `migrate`: SQLite cannot add a `CHECK` or a
 `UNIQUE` constraint in place, so the two tables that need them are rebuilt with the
-documented 12-step procedure (disable foreign keys, create the new table, copy, drop,
-rename, re-enable, verify).
+SQLite table-rebuild procedure: disable foreign keys before beginning the transaction,
+validate references, create/copy/drop/rename the tables, restore dependent objects, check
+foreign keys again, commit, then re-enable enforcement. Failures roll back the transaction.
 
 ## Tests
 
@@ -60,4 +79,5 @@ python -m unittest discover -s tests -v
 ```
 
 `tests/test_database.py` covers the schema, the guards, the price trigger, the order
-summary, the index plan, the v1.1 -> v1.2 migration and backup/restore.
+summary, the index plan, migration rollback and ID preservation, backend initialization,
+and binary/SQL backup restoration, consistency and retention.

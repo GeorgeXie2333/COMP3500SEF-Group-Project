@@ -7,18 +7,16 @@
 
 ## 1. Overview
 
-The backend (`backend/server.py`) talks to SQLite through the standard library only, so
-every query in it is hand-written SQL. An index is worth adding only when it removes a
-`SCAN TABLE` - a full table sweep - from one of those statements, or removes a temporary
-B-tree sort from an `ORDER BY`. Adding indexes that no query can use makes
-`INSERT`/`UPDATE` slower and bloats the database file for nothing.
+The backend (`backend/server.py`) uses hand-written SQLite statements. Its current reads
+are login/profile lookups, unfiltered shipment and inventory lists, order-line expansion,
+and individual shipment/event/hub/item lookups. Most point lookups already use primary
+keys or UNIQUE constraints.
 
-This plan was therefore built in three steps:
-
-1. Enumerate every `SELECT`/`INSERT`/`UPDATE`/`DELETE` in `backend/server.py`.
-2. Check which of them already ride an existing `PRIMARY KEY` or `UNIQUE` index.
-3. Add an index only for the remaining access paths, and confirm each one with
-   `EXPLAIN QUERY PLAN`.
+The additional indexes below also support planned reporting and tracking queries and
+foreign-key child lookups. The backend does not yet expose filtered shipment lists, a
+timeline read endpoint, hub feeds or KPI reports. Example query plans demonstrate those
+access paths; they are not measurements of existing endpoint speedups. All indexes add
+storage and write overhead, so revisit the planned indexes when those features arrive.
 
 All new statements use `CREATE INDEX IF NOT EXISTS`, so the block is idempotent: it can be
 re-applied to a freshly migrated database or to a populated one without error and without
@@ -32,43 +30,45 @@ the planner.
 
 | Column | Existing implicit index | Backend access path | Action |
 | :--- | :--- | :--- | :--- |
-| `shipments.tracking_number` | `UNIQUE` -> `sqlite_autoindex_shipments_1` | tracking-number lookup / duplicate check | none |
+| `shipments.tracking_number` | `UNIQUE` -> `sqlite_autoindex_shipments_1` | INSERT uniqueness enforcement; future tracking-number lookup | none |
 | `items.sku` | `UNIQUE` -> `sqlite_autoindex_items_1` | `POST /api/shipments` item lookup | none |
 | `users.username` | `UNIQUE` -> `sqlite_autoindex_users_1` | `POST /api/auth/login` credential lookup | none |
 | `users.user_id`, `hubs.hub_id`, `shipments.shipment_id`, `tracking_events.event_id` | rowid primary key | `get_shipment`, hub validation, status update | none |
 | `shipment_items.shipment_id` | `UNIQUE(shipment_id, item_id)` (v1.2) | order-line expansion, `ON DELETE CASCADE` | none - the unique key's leading column already covers it |
 
-`GET /api/shipments` intentionally performs a full sweep of `shipments`: it returns every
-shipment with no predicate, so there is nothing for an index to narrow. It is the single
-`SCAN` in the verification run in §4.
+`GET /api/shipments` and `GET /api/items` intentionally scan their tables: they return all
+rows ordered by their integer primary key. The shipment list joins each sender by
+`users.user_id`; an index on `shipments.sender_id` does not accelerate that join direction.
+Order-line expansion filters by shipment ID but orders by `shipment_item_id`, so the
+composite UNIQUE key can narrow the rows while SQLite may still use a temporary sort.
 
 ## 3. Indexes in this plan
 
 Added at the bottom of `database/schema.sql` (and applied to an existing database by
 `python database/db_manager.py migrate`).
 
-| # | Index | Target table & columns | Backend query pattern optimised |
+| # | Index | Target table & columns | Supported access path |
 | :--- | :--- | :--- | :--- |
-| A | `idx_tracking_events_lookup` *(upgraded)* | `tracking_events(shipment_id, event_time DESC, event_id DESC)` | Shipment timeline, newest first. `event_time` has one-second resolution, so two events written in the same second had no defined order; appending `event_id` makes the order total and lets the index serve `ORDER BY event_time DESC, event_id DESC` without a temporary B-tree. |
-| 1 | `idx_shipments_sender_time` | `shipments(sender_id, created_at DESC)` | `SHIPMENT_SELECT ... LEFT JOIN users ON users.user_id = shipments.sender_id`; "shipments sent by user X, newest first". The composite key also satisfies the `ORDER BY created_at DESC`. |
-| 2 | `idx_shipments_status_created_at` | `shipments(status, created_at DESC)` | Status-filtered listing and dashboard counts (`WHERE status = ?`), newest first. |
-| 3 | `idx_shipments_current_hub_id` | `shipments(current_hub_id)` | Hub workload view (`WHERE current_hub_id = ?`) and the `current_hub_id` foreign-key check. |
-| 4 | `idx_shipment_items_item_id` | `shipment_items(item_id)` | Item-level reporting: which orders contain a given item, and units sold per SKU. Also serves the `item_id` foreign key. |
-| 5 | `idx_tracking_events_hub_time` | `tracking_events(hub_id, event_time DESC) WHERE hub_id IS NOT NULL` | Hub activity feed, newest first. Partial index: status changes generated by the API store `hub_id = NULL`, so excluding those rows keeps the tree small. |
-| 6 | `idx_tracking_events_status_time` | `tracking_events(status, event_time DESC)` | Status history and KPI counts across all shipments (`WHERE status = ?`), newest first. |
+| A | `idx_tracking_events_lookup` *(upgraded)* | `tracking_events(shipment_id, event_time DESC, event_id DESC)` | Planned timeline with explicit `ORDER BY event_time DESC, event_id DESC`; also shipment FK child lookups. The query must request both sort keys for deterministic ordering. |
+| 1 | `idx_shipments_sender_time` | `shipments(sender_id, created_at DESC)` | Planned `WHERE sender_id = ? ORDER BY created_at DESC`; sender FK child lookup. |
+| 2 | `idx_shipments_status_created_at` | `shipments(status, created_at DESC)` | Planned status-filtered listing and dashboard counts. |
+| 3 | `idx_shipments_current_hub_id` | `shipments(current_hub_id)` | Planned hub workload query and hub FK child lookup. |
+| 4 | `idx_shipment_items_item_id` | `shipment_items(item_id)` | Planned item-level reporting and item FK child lookup. |
+| 5 | `idx_tracking_events_hub_time` | `tracking_events(hub_id, event_time DESC) WHERE hub_id IS NOT NULL` | Planned hub feed and hub FK child lookup. NULL hubs are excluded from the index. |
+| 6 | `idx_tracking_events_status_time` | `tracking_events(status, event_time DESC)` | Planned status history and KPI queries across shipments. |
 
-Seven custom indexes in total, for the twelve statements the API issues.
+Seven custom indexes in total. Primary-key and UNIQUE access paths are additional.
 
 ## 4. Verification
 
-Run against a database rebuilt from `database/schema.sql`, with the index block applied
-**twice** to prove idempotency (SQLite 3.53.1 / CPython 3.12):
+Check a scratch database rebuilt from `database/schema.sql`, and migrate it twice to
+check idempotency. Planner output can vary with SQLite version and row counts:
 
 * `PRAGMA integrity_check` -> `ok`
 * `PRAGMA foreign_key_check` -> no rows (all foreign keys still valid)
 * `python database/db_manager.py verify` -> 12/12 checks pass
 
-`EXPLAIN QUERY PLAN` for the statements that matter:
+Representative `EXPLAIN QUERY PLAN` access paths (including planned queries from §3):
 
 | Query | Plan |
 | :--- | :--- |
@@ -80,28 +80,34 @@ Run against a database rebuilt from `database/schema.sql`, with the index block 
 | shipment timeline | `SEARCH tracking_events USING INDEX idx_tracking_events_lookup (shipment_id=?)` |
 | hub feed | `SEARCH tracking_events USING COVERING INDEX idx_tracking_events_hub_time (hub_id=?)` |
 | status history | `SEARCH tracking_events USING COVERING INDEX idx_tracking_events_status_time (status=?)` |
-| order lines | `SEARCH shipment_items USING INDEX sqlite_autoindex_shipment_items_1 (shipment_id=?)` |
+| order lines | `SEARCH shipment_items USING INDEX sqlite_autoindex_shipment_items_1 (shipment_id=?)`; the API's `ORDER BY shipment_item_id` may also need a temporary B-tree |
 | item reporting | `SEARCH shipment_items USING INDEX idx_shipment_items_item_id (item_id=?)` |
 | full listing | `SCAN shipments` (intentional: no predicate) |
+| inventory listing | `SCAN items` (intentional: no predicate) |
 
 To reproduce locally:
 
 ```powershell
-python database/db_manager.py rebuild --db backend/lms.db --force
-python database/db_manager.py verify  --db backend/lms.db
+python database/db_manager.py rebuild --db database/backups/index-plan-check.db --force
+python database/db_manager.py migrate --db database/backups/index-plan-check.db
+python database/db_manager.py migrate --db database/backups/index-plan-check.db
+python database/db_manager.py verify  --db database/backups/index-plan-check.db
 ```
 
-Then inspect any statement with `EXPLAIN QUERY PLAN <sql>` and check that the plan reports
-`SEARCH ... USING ... INDEX` rather than `SCAN` (except the intentional listing).
+For example, run `EXPLAIN QUERY PLAN SELECT * FROM tracking_events WHERE shipment_id = 1
+ORDER BY event_time DESC, event_id DESC LIMIT 10`. The timeline regression test checks that
+this query uses `idx_tracking_events_lookup` without a temporary sort. Compare the other
+queries with the actual statements and sort keys in `backend/server.py`; a full scan is
+expected for an unfiltered list.
 
 ## 5. Maintenance notes
 
 * **Write cost:** seven indexes add a small constant cost to `INSERT`/`UPDATE` on
   `shipments`, `shipment_items` and `tracking_events`. With the current data volume this is
-  negligible; the read paths above are what the API actually exercises.
+  small, but several indexed read paths are planned and have no current API consumer.
 * **When to revisit:** if a new endpoint filters on a column that is not covered here,
   extend this table and add the index in the same PR.
-* **Do not drop** `idx_tracking_events_lookup`: the timeline depends on it. Its column list
+* `idx_tracking_events_lookup` supports timeline queries and the shipment FK. Its column list
   changed in v1.2 (the `event_id` tie-break); `db_manager.py migrate` detects the old
   two-column version and replaces it.
 * `CREATE INDEX IF NOT EXISTS` is safe to re-run from the migration script, so
@@ -116,11 +122,12 @@ renamed.
 
 | Change | Why the database and not the API |
 | :--- | :--- |
-| `shipment_items.unit_price` (price snapshot) | A later catalogue price change must not rewrite the amount of an old order. Section 3's "order total" queries only become meaningful once the price is captured at order time. Filled by trigger `trg_shipment_items_price`, so `backend/server.py` needs no change. |
-| `UNIQUE(shipment_id, item_id)` | The same product booked twice in one order used to deduct stock twice and duplicate the row on screen. The API only ever inserts one line per order, so the constraint is invisible to it. |
+| `shipment_items.unit_price` (price snapshot) | New orders capture the catalogue price via `trg_shipment_items_price`. Existing v1.1 orders can only be backfilled from the catalogue price at migration time. The summary view is available to SQL consumers; the API does not yet expose it. |
+| `UNIQUE(shipment_id, item_id)` | Prevents duplicate product rows. The API inserts one line per order. Migration combines existing duplicate quantities without altering stock. |
 | `CHECK(stock_quantity >= 0)`, `CHECK(quantity > 0)` | The API already guards both, but a direct SQL fix or a future script could still write a negative stock row. The constraint makes that impossible rather than unlikely. |
 | `items.sku NOT NULL` | A `NULL` sku is allowed by a `UNIQUE` index in SQLite, so one missing sku would silently defeat de-duplication and the API's lookup-by-sku path. |
 
-Rollback and forward migration both live in `database/db_manager.py`; the upgrade path is
-exercised by `tests/test_database.py` (a v1.1 database is migrated, verified and checked for
-merged duplicate lines).
+`database/db_manager.py` supports forward migration with transaction rollback on failure;
+there is no downgrade command. To restore an older schema, use a pre-migration backup.
+`tests/test_database.py` checks successful upgrades, whole-transaction rollback, duplicate
+consolidation, ID preservation and both backup formats.
