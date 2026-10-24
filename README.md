@@ -38,6 +38,10 @@ if that account is missing, including for existing v1.1 databases.
   milestones and task, progress and decision templates.
 - [Former code-template document](CODE.md): navigation retained for older links.
 - [Database guide](database/README.md): v1.1 migration, backup, restore and integrity checks.
+- [P2 mockup plan](docs/ui/p2-mockups.md): current screen scope, proposed designs
+  and usability/handover checklists; design assets and reviews are pending.
+- [Manual test plan](docs/ui/docs/test/test-cases.md): current workflow cases and
+  future feature blockers; execution results are not yet recorded.
 
 ## Repository layout
 
