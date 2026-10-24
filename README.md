@@ -16,15 +16,15 @@ are still planned.
 | Component | Available now | Work still planned |
 | --- | --- | --- |
 | Frontend | React/TypeScript screens for sign in, orders, inventory and waybills, connected to Python/SQLite | Remaining logistics modules |
-| Backend | Python standard-library HTTP server with SQLite users, password hashing and schema v1.1 persistence | Production session management and role permissions |
-| Database | SQLite schema v1.1 (`users`, `hubs`, `items`, `shipments`, `shipment_items`, `tracking_events`) plus Hong Kong seed data | Database selection beyond SQLite and a migration approach |
+| Backend | Python standard-library HTTP server with SQLite users, password hashing and schema v1.2 persistence | Production session management and role permissions |
+| Database | SQLite schema v1.2 (`users`, `hubs`, `items`, `shipments`, `shipment_items`, `tracking_events`), Hong Kong seed data, migration and backup tools | Database selection beyond SQLite |
 | Tests | Python HTTP API tests and freight examples; frontend API workflow tests against Python/SQLite | Automated browser regression tests |
 | Delivery | Source files, team documentation, Dockerfile and GitHub Actions build/test workflow | Deployment and release automation |
 
 The backend loads `database/schema.sql` into SQLite on first start.
 The frontend calls the same API under `/api`. Orders and waybills show the same
 `shipments` records. Creating a waybill deducts stock in one SQLite transaction;
-status options match schema v1.1: `pending`, `shipped`, `delivered`.
+status options match schema v1.2: `pending`, `shipped`, `delivered`.
 The backend adds a `demo` user with a salted PBKDF2 password hash on first start
 if that account is missing, including for existing v1.1 databases.
 
@@ -37,6 +37,7 @@ if that account is missing, including for existing v1.1 databases.
 - [Project record](docs/PROJECT.md): member responsibilities, provisional
   milestones and task, progress and decision templates.
 - [Former code-template document](CODE.md): navigation retained for older links.
+- [Database guide](database/README.md): v1.1 migration, backup, restore and integrity checks.
 
 ## Repository layout
 
@@ -120,8 +121,11 @@ Authenticated writes (`POST /api/auth/login`, `POST /api/shipments`,
 `PATCH /api/shipments/{id}/status`, `POST /api/shipments/{id}/events`) are
 documented in [docs/openapi.yaml](docs/openapi.yaml). Stop the server with
 **Ctrl+C**. If port 8000 is already in use, stop the conflicting local server
-before retrying. An existing `backend/lms.db` built on the old four-table
-schema should be deleted so the v1.1 schema can be created.
+before retrying. For an existing v1.1 database, stop the backend, run
+`python database/db_manager.py backup`, then `python database/db_manager.py migrate`
+and `python database/db_manager.py verify` (substitute `py -3` on Windows).
+The older four-table schema is unsupported by migration; preserve a backup before
+using `rebuild` if its data is disposable.
 
 The server listens on `localhost` by default. Set `LMS_HOST` to choose another
 listen address and `LMS_DB_PATH` to choose the SQLite file (default:
@@ -190,7 +194,7 @@ Expect `users`, `hubs`, `items`, `shipments`, `shipment_items` and
 `tracking_events`, a user named `customer_alice`, and SKU `TECH-WM-001` with
 quantity `120`. The database disappears when the command exits.
 
-The script begins by dropping the v1.1 tables, so re-running it against the same
+The script begins by dropping the existing tables, so re-running it against the same
 file rebuilds seed data. Use a fresh database for this check. MySQL and
 PostgreSQL execution has not been verified; CI and the backend use SQLite.
 
