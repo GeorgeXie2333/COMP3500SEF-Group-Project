@@ -6,16 +6,18 @@
 
 ## 1. Mockups Delivery Progress
 
-| Page Name | Delivery Phase | Design Assets (Figma/Image Links) | Core Interaction / Notes | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| *e.g., Home Page* | High-fidelity UI | [🔗 Click to view Figma artboard](#) | Includes carousel and search bar placeholder | ✅ Completed |
-| *e.g., Registration/Login* | Low-fidelity Wireframe | [🔗 Click to view Figma artboard](#) | Form validation logic needs to be added | 🚧 In Progress |
-| *Page Name A* | *Phase (Low-fi/High-fi)* | [🔗 Design Link](#) | *Describe core functionality or special interactions* | ⏳ To Start |
-| *Page Name B* | *Phase (Low-fi/High-fi)* | [🔗 Design Link](#) | *Describe core functionality or special interactions* | ⏳ To Start |
-| *Page Name C* | *Phase (Low-fi/High-fi)* | [🔗 Design Link](#) | *Describe core functionality or special interactions* | ⏳ To Start |
-
-*(Note: Please replace the example rows above with your actual project pages)*
-
+| Page Name | Delivery Phase | Design Assets (Figma/Image Links) | Core Interaction / Notes |
+| :--- | :--- | :--- | :--- |
+| User Registration & Login | Low-fidelity Wireframe |  | Form validation, error feedback, password visibility toggle |
+| Address Book Management | Low-fidelity Wireframe |  | HK-style address fields (district/building/block/floor/unit), mobile verification |
+| Online Order Placement | Low-fidelity Wireframe |  | Auto shipping fee calculation (first weight + additional weight/volumetric weight), service type selection | 
+| Order List & Details | Low-fidelity Wireframe |  | Search bar, filter dropdowns, pagination, order status display |
+| Order Status Flow | Low-fidelity Wireframe |  | Status machine progression (created→picked_up→in_warehouse→in_transit→at_station→out_for_delivery→delivered), failed/cancelled terminal states |
+| Logistics Tracking Timeline | Low-fidelity Wireframe |  | Timeline view of tracking_events, chronological event display with timestamps | 
+| Dispatch Task Assignment | Low-fidelity Wireframe |  | Task assignment to couriers, order status tracking, bulk dispatch |
+| Delivery Confirmation | Low-fidelity Wireframe |  | Signature capture, timestamp recording, receiver name, notes field |
+| Warehouse & Inventory Management | Low-fidelity Wireframe |  | Stock in/out registration, inventory view with negative stock prevention | 
+| Admin Dashboard (User/Role/Status Config) | Low-fidelity Wireframe |  | User & role management, status dictionary editing, system configuration | 
 ---
 
 ## 2. Pre-implementation Usability Checklist
