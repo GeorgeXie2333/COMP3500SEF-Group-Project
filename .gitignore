@@ -21,6 +21,9 @@ backend/lms.db*
 Thumbs.db
 
 # --- Others ---
-/output/playwright/
 *.tmp
 *.bak
+
+# --- Local database backups (database/db_manager.py backup) ---
+database/backups/
+
