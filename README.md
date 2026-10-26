@@ -90,6 +90,40 @@ starts successfully before continuing:
 | Windows PowerShell | `py -3 --version` |
 | macOS/Linux terminal | `python3 --version` |
 
+### One-command Windows startup
+
+From the repository root in Windows PowerShell 5.1 or PowerShell 7, run:
+
+```powershell
+.\start.ps1
+```
+
+Install Python 3 and Node.js 22.12 or later first. The script finds `py`, `python`
+or `python3`, runs `npm ci` with the lockfile, starts both servers and opens
+http://127.0.0.1:3000 after the frontend, backend and API proxy are ready.
+Sign in with `demo` / `demo123`. This starts local development servers, not a
+production deployment.
+
+Keep the launching terminal open. Press **Enter** or **Ctrl+C** there to stop both
+servers. Startup failures also clean up the processes started by the script;
+logs are saved under `output/startup/`. Ports 8000 and 3000 must be free: the
+script refuses an existing listener instead of reusing it or moving Vite to a
+different port. It binds the local pair to `127.0.0.1` and uses `/api`, temporarily
+overriding `LMS_HOST` and `VITE_API_BASE_URL` and restoring them on exit.
+`LMS_DB_PATH` is still respected; the default database is `backend/lms.db`.
+
+Optional switches:
+
+- `-PythonExecutable 'C:\path\to\python.exe'`: select an interpreter; the `PYTHON`
+  environment variable is also supported.
+- `-SkipInstall`: reuse an existing frontend installation. Use only after a
+  successful `npm ci` with the current lockfile; omit after dependency changes.
+- `-NoBrowser`: start without opening a browser.
+
+If your PowerShell execution policy blocks a downloaded script, review the file
+and follow your machine's policy for running local scripts, or use the separate
+frontend/backend commands below.
+
 ### Frontend
 
 Start the Python backend as described below. Use Node.js 22.12 or later,
@@ -177,6 +211,14 @@ For frontend validation, run `npm test`, `npm run lint -- --max-warnings=0`
 and `npm run build` from `frontend`. The workflow suite checks the local HTTP
 React API layer against a real temporary Python/SQLite server; the
 [frontend guide](frontend/README.md) describes its scope and Python configuration.
+
+On Windows, after `npm ci` in `frontend`, run
+`py -3 -m unittest discover -s tests/windows -v` to check `start.ps1` with real
+Python/Vite processes. The separate suite covers startup from a path with spaces,
+the API proxy, occupied ports, invalid health responses, install/server failures
+and process cleanup. It uses disposable database files and does not open a browser.
+Ports 8000 and 3000 must be free; local tests skip if either is already in use.
+GitHub Actions runs this suite in a separate Windows job.
 
 GitHub Actions runs the Python suite for pushes and PRs targeting `main`, builds the
 Docker image, starts the backend container and checks the health response through
